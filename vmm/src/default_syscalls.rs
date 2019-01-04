@@ -2,54 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 extern crate libc;
+extern crate sys_util;
 
 use seccomp::{
-    Error, SeccompAction, SeccompCmpOp, SeccompCondition, SeccompFilterContext, SeccompRule,
+    setup_seccomp, Error, SeccompAction, SeccompCmpOp, SeccompCondition, SeccompFilterContext,
+    SeccompLevel, SeccompRule, SECCOMP_LEVEL_ADVANCED, SECCOMP_LEVEL_BASIC, SECCOMP_LEVEL_NONE,
 };
 
 /// List of allowed syscalls, necessary for Firecracker to function correctly.
 pub const ALLOWED_SYSCALLS: &[i64] = &[
-    libc::SYS_read,
-    libc::SYS_write,
-    libc::SYS_open,
-    libc::SYS_close,
-    libc::SYS_stat,
-    libc::SYS_fstat,
-    libc::SYS_lseek,
-    libc::SYS_mmap,
-    libc::SYS_mprotect,
-    libc::SYS_munmap,
-    libc::SYS_brk,
-    libc::SYS_rt_sigaction,
-    libc::SYS_rt_sigprocmask,
-    libc::SYS_rt_sigreturn,
-    libc::SYS_ioctl,
-    libc::SYS_readv,
-    libc::SYS_writev,
-    libc::SYS_pipe,
-    libc::SYS_dup,
-    libc::SYS_socket,
     libc::SYS_accept,
-    libc::SYS_bind,
-    libc::SYS_listen,
-    libc::SYS_clone,
-    libc::SYS_execve,
-    libc::SYS_exit,
-    libc::SYS_fcntl,
-    libc::SYS_readlink,
-    libc::SYS_sigaltstack,
-    libc::SYS_prctl,
-    libc::SYS_arch_prctl,
-    libc::SYS_futex,
-    libc::SYS_sched_getaffinity,
-    libc::SYS_set_tid_address,
-    libc::SYS_exit_group,
+    libc::SYS_clock_gettime,
+    libc::SYS_close,
+    libc::SYS_dup,
     libc::SYS_epoll_ctl,
     libc::SYS_epoll_pwait,
+    libc::SYS_exit,
+    libc::SYS_exit_group,
+    libc::SYS_fstat,
+    libc::SYS_futex,
+    libc::SYS_ioctl,
+    libc::SYS_lseek,
+    libc::SYS_mmap,
+    libc::SYS_munmap,
+    libc::SYS_open,
+    libc::SYS_pipe,
+    libc::SYS_read,
+    libc::SYS_readv,
+    libc::SYS_rt_sigreturn,
+    libc::SYS_stat,
     libc::SYS_timerfd_create,
-    libc::SYS_eventfd2,
-    libc::SYS_epoll_create1,
-    libc::SYS_getrandom,
+    libc::SYS_timerfd_settime,
+    libc::SYS_tkill,
+    libc::SYS_write,
+    libc::SYS_writev,
 ];
 
 // See /usr/include/x86_64-linux-gnu/sys/epoll.h
@@ -61,10 +47,6 @@ const O_RDONLY: u64 = 0x00000000;
 const O_RDWR: u64 = 0x00000002;
 const O_NONBLOCK: u64 = 0x00004000;
 const O_CLOEXEC: u64 = 0x02000000;
-const F_GETFD: u64 = 1;
-const F_SETFD: u64 = 2;
-const F_SETFL: u64 = 4;
-const FD_CLOEXEC: u64 = 1;
 
 // See /usr/include/linux/futex.h
 const FUTEX_WAIT: u64 = 0;
@@ -119,8 +101,17 @@ const MAP_PRIVATE: u64 = 0x02;
 const MAP_ANONYMOUS: u64 = 0x20;
 const MAP_NORESERVE: u64 = 0x4000;
 
-// See /usr/include/x86_64-linux-gnu/bits/socket.h
-const PF_LOCAL: u64 = 1;
+/// Applies the configured level of seccomp filtering to the current thread.
+pub fn set_seccomp_level(seccomp_level: u32) -> Result<(), Error> {
+    // Load seccomp filters before executing guest code.
+    // Execution panics if filters cannot be loaded, use --seccomp-level=0 if skipping filters
+    // altogether is the desired behaviour.
+    match seccomp_level {
+        SECCOMP_LEVEL_ADVANCED => setup_seccomp(SeccompLevel::Advanced(default_context()?)),
+        SECCOMP_LEVEL_BASIC => setup_seccomp(seccomp::SeccompLevel::Basic(ALLOWED_SYSCALLS)),
+        SECCOMP_LEVEL_NONE | _ => Ok(()),
+    }
+}
 
 /// The default context containing the white listed syscall rules required by `Firecracker` to
 /// function.
@@ -132,7 +123,7 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
-                libc::SYS_bind,
+                libc::SYS_clock_gettime,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
@@ -142,16 +133,6 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
             (
                 libc::SYS_dup,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
-            ),
-            (
-                libc::SYS_epoll_create1,
-                (
-                    0,
-                    vec![SeccompRule::new(
-                        vec![SeccompCondition::new(0, SeccompCmpOp::Eq, 0)?],
-                        SeccompAction::Allow,
-                    )],
-                ),
             ),
             (
                 libc::SYS_epoll_ctl,
@@ -174,47 +155,12 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
-                libc::SYS_eventfd2,
-                (
-                    0,
-                    vec![SeccompRule::new(
-                        vec![
-                            SeccompCondition::new(0, SeccompCmpOp::Eq, 0)?,
-                            SeccompCondition::new(1, SeccompCmpOp::Eq, 0)?,
-                        ],
-                        SeccompAction::Allow,
-                    )],
-                ),
+                libc::SYS_exit,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
-                libc::SYS_fcntl,
-                (
-                    0,
-                    vec![
-                        SeccompRule::new(
-                            vec![
-                                SeccompCondition::new(1, SeccompCmpOp::Eq, F_SETFL)?,
-                                SeccompCondition::new(
-                                    2,
-                                    SeccompCmpOp::Eq,
-                                    O_RDONLY | O_NONBLOCK | O_CLOEXEC,
-                                )?,
-                            ],
-                            SeccompAction::Allow,
-                        ),
-                        SeccompRule::new(
-                            vec![
-                                SeccompCondition::new(1, SeccompCmpOp::Eq, F_SETFD)?,
-                                SeccompCondition::new(2, SeccompCmpOp::Eq, FD_CLOEXEC)?,
-                            ],
-                            SeccompAction::Allow,
-                        ),
-                        SeccompRule::new(
-                            vec![SeccompCondition::new(1, SeccompCmpOp::Eq, F_GETFD)?],
-                            SeccompAction::Allow,
-                        ),
-                    ],
-                ),
+                libc::SYS_exit_group,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
                 libc::SYS_fstat,
@@ -405,10 +351,6 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 ),
             ),
             (
-                libc::SYS_listen,
-                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
-            ),
-            (
                 libc::SYS_lseek,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
@@ -496,20 +438,6 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 ),
             ),
             (
-                libc::SYS_mprotect,
-                (
-                    0,
-                    vec![SeccompRule::new(
-                        vec![SeccompCondition::new(
-                            2,
-                            SeccompCmpOp::Eq,
-                            PROT_READ | PROT_WRITE,
-                        )?],
-                        SeccompAction::Allow,
-                    )],
-                ),
-            ),
-            (
                 libc::SYS_munmap,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
@@ -571,25 +499,37 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
-                libc::SYS_readlink,
-                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
-            ),
-            (
                 libc::SYS_readv,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
+            // SYS_rt_sigreturn is needed in case a fault does occur, so that the signal handler
+            // can return. Otherwise we get stuck in a fault loop.
             (
-                libc::SYS_socket,
+                libc::SYS_rt_sigreturn,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_stat,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_tkill,
                 (
                     0,
                     vec![SeccompRule::new(
-                        vec![SeccompCondition::new(0, SeccompCmpOp::Eq, PF_LOCAL)?],
+                        vec![SeccompCondition::new(
+                            1,
+                            SeccompCmpOp::Eq,
+                            sys_util::validate_signal_num(super::VCPU_RTSIG_OFFSET, true)
+                                .map_err(|_| Error::InvalidArgumentNumber)?
+                                as u64,
+                        )?],
                         SeccompAction::Allow,
                     )],
                 ),
             ),
             (
-                libc::SYS_stat,
+                libc::SYS_timerfd_create,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
@@ -604,75 +544,56 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 libc::SYS_writev,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
-        ].into_iter()
+        ]
+        .into_iter()
         .collect(),
         SeccompAction::Trap,
     )?)
 }
 
 #[cfg(test)]
+#[cfg(target_env = "musl")]
 mod tests {
     extern crate libc;
     extern crate seccomp;
 
+    use super::*;
+
     #[test]
-    #[cfg(target_env = "musl")]
     fn test_basic_seccomp() {
-        assert!(
-            seccomp::setup_seccomp(seccomp::SeccompLevel::Basic(super::ALLOWED_SYSCALLS)).is_ok()
-        );
+        let mut rules = ALLOWED_SYSCALLS.to_vec();
+        rules.extend(vec![
+            libc::SYS_clone,
+            libc::SYS_mprotect,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_set_tid_address,
+            libc::SYS_sigaltstack,
+        ]);
+        assert!(seccomp::setup_seccomp(seccomp::SeccompLevel::Basic(&rules)).is_ok());
     }
 
     #[test]
-    #[cfg(target_env = "musl")]
     fn test_advanced_seccomp() {
         // Sets up context with additional rules required by the test.
-        let mut context = super::default_context().unwrap();
-        assert!(
-            context
+        let mut context = default_context().unwrap();
+        for rule in vec![
+            libc::SYS_clone,
+            libc::SYS_mprotect,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_set_tid_address,
+            libc::SYS_sigaltstack,
+        ] {
+            assert!(context
                 .add_rules(
-                    libc::SYS_exit,
+                    rule,
                     None,
                     vec![seccomp::SeccompRule::new(
                         vec![],
                         seccomp::SeccompAction::Allow,
                     )],
-                ).is_ok()
-        );
-        assert!(
-            context
-                .add_rules(
-                    libc::SYS_rt_sigprocmask,
-                    None,
-                    vec![seccomp::SeccompRule::new(
-                        vec![],
-                        seccomp::SeccompAction::Allow,
-                    )],
-                ).is_ok()
-        );
-        assert!(
-            context
-                .add_rules(
-                    libc::SYS_set_tid_address,
-                    None,
-                    vec![seccomp::SeccompRule::new(
-                        vec![],
-                        seccomp::SeccompAction::Allow,
-                    )],
-                ).is_ok()
-        );
-        assert!(
-            context
-                .add_rules(
-                    libc::SYS_sigaltstack,
-                    None,
-                    vec![seccomp::SeccompRule::new(
-                        vec![],
-                        seccomp::SeccompAction::Allow,
-                    )],
-                ).is_ok()
-        );
-
+                )
+                .is_ok());
+        }
         assert!(seccomp::setup_seccomp(seccomp::SeccompLevel::Advanced(context)).is_ok());
     }
 }

@@ -42,7 +42,6 @@ mod tests {
     use serde_json;
 
     use self::rate_limiter::RateLimiter;
-    use vmm::vmm_config::DeviceState;
 
     fn get_dummy_netif(
         iface_id: String,
@@ -51,7 +50,6 @@ mod tests {
     ) -> NetworkInterfaceConfig {
         NetworkInterfaceConfig {
             iface_id,
-            state: DeviceState::Attached,
             host_dev_name,
             guest_mac: Some(MacAddr::parse_str(mac).unwrap()),
             rx_rate_limiter: None,
@@ -68,11 +66,9 @@ mod tests {
             String::from("bar"),
             "12:34:56:78:9A:BC",
         );
-        assert!(
-            netif
-                .into_parsed_request(Some(String::from("bar")), Method::Put)
-                .is_err()
-        );
+        assert!(netif
+            .into_parsed_request(Some(String::from("bar")), Method::Put)
+            .is_err());
 
         let (sender, receiver) = oneshot::channel();
         let netif = get_dummy_netif(
@@ -86,21 +82,18 @@ mod tests {
             String::from("bar"),
             "12:34:56:78:9A:BC",
         );
-        assert!(
-            netif
-                .into_parsed_request(Some(String::from("foo")), Method::Put)
-                .eq(&Ok(ParsedRequest::Sync(
-                    VmmAction::InsertNetworkDevice(netif_clone, sender),
-                    receiver
-                )))
-        );
+        assert!(netif
+            .into_parsed_request(Some(String::from("foo")), Method::Put)
+            .eq(&Ok(ParsedRequest::Sync(
+                VmmAction::InsertNetworkDevice(netif_clone, sender),
+                receiver
+            ))));
     }
 
     #[test]
     fn test_network_interface_body_serialization_and_deserialization() {
         let netif = NetworkInterfaceConfig {
             iface_id: String::from("foo"),
-            state: DeviceState::Attached,
             host_dev_name: String::from("bar"),
             guest_mac: Some(MacAddr::parse_str("12:34:56:78:9A:BC").unwrap()),
             rx_rate_limiter: Some(RateLimiter::default()),
@@ -113,7 +106,6 @@ mod tests {
         let jstr = r#"{
             "iface_id": "foo",
             "host_dev_name": "bar",
-            "state": "Attached",
             "guest_mac": "12:34:56:78:9A:bc",
             "rx_rate_limiter": {
             },
@@ -128,8 +120,7 @@ mod tests {
         // Check that guest_mac and rate limiters are truly optional.
         let jstr_no_mac = r#"{
             "iface_id": "foo",
-            "host_dev_name": "bar",
-            "state": "Attached"
+            "host_dev_name": "bar"
         }"#;
 
         assert!(serde_json::from_str::<NetworkInterfaceConfig>(jstr_no_mac).is_ok())

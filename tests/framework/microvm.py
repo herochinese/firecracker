@@ -65,7 +65,7 @@ class Microvm:
             jailer_id=self._microvm_id,
             exec_file=self._fc_binary_path
         )
-        self._jailer_clone_pid = None
+        self.jailer_clone_pid = None
 
         # Now deal with the things specific to the api session used to
         # communicate with this machine.
@@ -106,8 +106,8 @@ class Microvm:
     def kill(self):
         """All clean up associated with this microVM should go here."""
         if self._jailer.daemonize:
-            if self._jailer_clone_pid:
-                run('kill -9 {}'.format(self._jailer_clone_pid), shell=True)
+            if self.jailer_clone_pid:
+                run('kill -9 {}'.format(self.jailer_clone_pid), shell=True)
         else:
             run(
                 'screen -XS {} kill'.format(self._session_name),
@@ -253,9 +253,20 @@ class Microvm:
                     + [self._jailer_binary_path]
                     + jailer_param_list,
                     stdout=PIPE,
+                    stderr=PIPE,
                     check=True
                 )
-                self._jailer_clone_pid = int(_p.stdout.decode().rstrip())
+                # Terrible hack to make the tests fail when starting the
+                # jailer fails with a panic. This is needed because we can't
+                # get the exit code of the jailer. In newpid_clone.c we are
+                # not waiting for the process and we always return 0 if the
+                # clone was successful (which in most cases will be) and we
+                # don't do anything if the jailer was not started
+                # successfully.
+                if _p.stderr.decode().strip():
+                    raise Exception(_p.stderr.decode())
+
+                self.jailer_clone_pid = int(_p.stdout.decode().rstrip())
             else:
                 # This code path is not used at the moment, but I just feel
                 # it's nice to have a fallback mechanism in place, in case
@@ -266,7 +277,7 @@ class Microvm:
                         self._jailer_binary_path,
                         [self._jailer_binary_path] + jailer_param_list
                     )
-                self._jailer_clone_pid = _pid
+                self.jailer_clone_pid = _pid
         else:
             start_cmd = 'screen -dmS {session} {binary} {params}'
             start_cmd = start_cmd.format(
@@ -281,9 +292,9 @@ class Microvm:
                 .stdout.decode('utf-8')
             screen_pid = re.search(r'([0-9]+)\.{}'.format(self._session_name),
                                    out).group(1)
-            self._jailer_clone_pid = open('/proc/{0}/task/{0}/children'
-                                          .format(screen_pid)
-                                          ).read().strip()
+            self.jailer_clone_pid = open('/proc/{0}/task/{0}/children'
+                                         .format(screen_pid)
+                                         ).read().strip()
 
         # Wait for the jailer to create resources needed.
         # We expect the jailer to start within 80 ms. However, we wait for
@@ -324,7 +335,7 @@ class Microvm:
         if self.monitor_memory:
             mem_tools.threaded_memory_monitor(
                 mem_size_mib,
-                self._jailer_clone_pid
+                self.jailer_clone_pid
             )
 
         # Add a kernel to start booting from.

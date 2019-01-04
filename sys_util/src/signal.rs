@@ -55,7 +55,7 @@ fn SIGRTMAX() -> c_int {
 /// Verifies that a signal number is valid: for VCPU signals, it needs to be enclosed within the OS
 /// limits for realtime signals, and the remaining ones need to be between the minimum (SIGHUP) and
 /// maximum (SIGSYS) values.
-fn validate_signal_num(num: c_int, for_vcpu: bool) -> Result<c_int> {
+pub fn validate_signal_num(num: c_int, for_vcpu: bool) -> Result<c_int> {
     if for_vcpu {
         let actual_num = num + SIGRTMIN();
         if actual_num <= SIGRTMAX() {
@@ -138,10 +138,12 @@ mod tests {
     fn test_register_signal_handler() {
         unsafe {
             // testing bad value
-            assert!(
-                register_signal_handler(SIGRTMAX(), SignalHandler::Siginfo(handle_signal), true)
-                    .is_err()
-            );
+            assert!(register_signal_handler(
+                SIGRTMAX(),
+                SignalHandler::Siginfo(handle_signal),
+                true
+            )
+            .is_err());
             format!(
                 "{:?}",
                 register_signal_handler(SIGRTMAX(), SignalHandler::Siginfo(handle_signal), true)
@@ -149,10 +151,12 @@ mod tests {
             assert!(
                 register_signal_handler(0, SignalHandler::Siginfo(handle_signal), true).is_ok()
             );
-            assert!(
-                register_signal_handler(libc::SIGSYS, SignalHandler::Siginfo(handle_signal), false)
-                    .is_ok()
-            );
+            assert!(register_signal_handler(
+                libc::SIGSYS,
+                SignalHandler::Siginfo(handle_signal),
+                false
+            )
+            .is_ok());
         }
     }
 

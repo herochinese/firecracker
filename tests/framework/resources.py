@@ -204,7 +204,8 @@ class Logger:
             metrics_fifo=None,
             level=None,
             show_level=None,
-            show_log_origin=None
+            show_log_origin=None,
+            options=None
     ):
         """Compose the json associated to this type of API request."""
         datax = {}
@@ -218,6 +219,8 @@ class Logger:
             datax['show_level'] = show_level
         if show_log_origin is not None:
             datax['show_log_origin'] = show_log_origin
+        if options is not None:
+            datax['options'] = options
         return datax
 
 
@@ -365,8 +368,7 @@ class Network:
         """Create the json for the net specific API request."""
         datax = {
             'iface_id': iface_id,
-            'host_dev_name': host_dev_name,
-            'state': 'Attached'
+            'host_dev_name': host_dev_name
         }
 
         if guest_mac is not None:
